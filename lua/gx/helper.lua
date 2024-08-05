@@ -1,35 +1,5 @@
 local M = {}
 
--- get visual selection
-local function visual_selection_range()
-  local _, csrow, cscol, _ = unpack(vim.fn.getpos("'<"))
-  local _, cerow, cecol, _ = unpack(vim.fn.getpos("'>"))
-
-  if csrow < cerow or (csrow == cerow and cscol <= cecol) then
-    return cscol - 1, cecol
-  else
-    return cecol - 1, cscol
-  end
-end
-
-local function table_contains(tbl, x)
-  local found = false
-  for _, v in pairs(tbl) do
-    if v == x then
-      found = true
-    end
-  end
-  return found
-end
-
--- Concat two tables to one
-function M.concat_tables(t1, t2)
-  for _, v in ipairs(t2) do
-    table.insert(t1, v)
-  end
-  return t1
-end
-
 -- check that cursor on uri in normal mode
 function M.check_if_cursor_on_url(mode, i, j)
   if mode ~= "n" then
@@ -42,17 +12,6 @@ function M.check_if_cursor_on_url(mode, i, j)
   end
 
   return false
-end
-
--- cut line if in visual mode
-function M.cut_with_visual_mode(mode, line)
-  if mode ~= "v" then
-    return line
-  end
-
-  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<esc>", true, false, true), "x", false)
-  local i, j = visual_selection_range()
-  return string.sub(line, i + 1, j)
 end
 
 -- find pattern in line and check if cursor on it
@@ -78,61 +37,57 @@ function M.ternary(cond, T, F)
   end
 end
 
--- check for filetype
-function M.check_filetype(handler_filetype)
-  local file_filetype = vim.bo.filetype
-  if not handler_filetype then
-    return true
+---@param result string
+local function parse_git_output(result)
+  local domain, repository = result:gsub("%.git%s*$", ""):match("@(.*%..*):(.*)$")
+  if domain and repository then
+    return "https://" .. domain .. "/" .. repository
   end
-  if table_contains(handler_filetype, file_filetype) then
-    return true
+  local url = result:gsub("%.git%s*$", ""):match("^https?://.+")
+  if url then
+    return url
   end
-  return false
 end
 
--- get filename
-function M.get_filename()
-  return vim.fn.expand("%:t")
-end
-
--- check for filename
-function M.check_filename(handler_filename)
-  local filename = M.get_filename()
-  if not handler_filename then
-    return true
+local function discover_remote(remotes, push, path)
+  local url = nil
+  for _, remote in ipairs(remotes) do
+    local args = { "-C", path, "remote", "get-url", remote }
+    if push then
+      table.insert(args, "--push")
+    end
+    local obj = vim.system({ "git", unpack(args) }):wait()
+    if obj.code == 0 then
+      url = parse_git_output(obj.stdout)
+      if url then
+        return url
+      end
+    end
   end
-  if handler_filename == filename then
-    return true
-  end
-  return false
-end
-
-local char_to_hex = function(c)
-  return string.format("%%%02X", string.byte(c))
-end
-
-function M.urlencode(url)
-  if url == nil then
-    return
-  end
-  url = url:gsub("\n", "\r\n")
-  url = string.gsub(url, "([^%w _%%%-%.~])", char_to_hex)
-  url = url:gsub(" ", "+")
   return url
 end
 
-function M.get_search_url_from_engine(engine)
-  local search_url = {
-    google = "https://www.google.com/search?q=",
-    bing = "https://www.bing.com/search?q=",
-    duckduckgo = "https://duckduckgo.com/?q=",
-    ecosia = "https://www.ecosia.org/search?q=",
-    yandex = "https://ya.ru/search?text=",
-  }
-  if search_url[engine] == nil then
-    return engine
+function M.get_remote_url(remotes, push, owner, repo)
+  local path = vim.fn.expand("%:p:h")
+  local url = discover_remote(remotes, push, path)
+  if not url then
+    url = discover_remote(remotes, push, vim.api.nvim_get_current_dir())
   end
-  return search_url[engine]
-end
 
+  if not url and (owner ~= "" and repo ~= "") then -- fallback to github if owner and repo are present
+    url = "https://github.com/foo/bar"
+  end
+  if not url then
+    return vim.notify("[gx]: " .. "No remote git repository found!", vim.log.levels.WARN)
+  end
+  if type(owner) == "string" and owner ~= "" then
+    local domain, repository = url:match("^https?://([^/]+)/[^/]+/([^/]*)")
+    if repo ~= "" then
+      repository = repo
+    end
+    url = string.format("https://%s/%s/%s", domain, owner, repository)
+  end
+
+  return url
+end
 return M
