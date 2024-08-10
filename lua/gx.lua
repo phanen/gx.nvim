@@ -17,49 +17,6 @@ local M = {}
 ---@field name string
 ---@field url string
 
-local get_remote_url = function(remotes, push, owner, repo)
-  ---@param result string
-  local function parse_git_output(result)
-    local domain, repository = result:gsub('%.git%s*$', ''):match('@(.*%..*):(.*)$')
-    if domain and repository then return 'https://' .. domain .. '/' .. repository end
-    local url = result:gsub('%.git%s*$', ''):match('^https?://.+')
-    if url then return url end
-  end
-
-  ---@diagnostic disable-next-line: redefined-local
-  local function discover_remote(remotes, push, path)
-    local url = nil
-    for _, remote in ipairs(remotes) do
-      local args = { '-C', path, 'remote', 'get-url', remote }
-      if push then table.insert(args, '--push') end
-      local obj = vim.system({ 'git', unpack(args) }):wait()
-      if obj.code == 0 then
-        url = parse_git_output(obj.stdout)
-        if url then return url end
-      end
-    end
-    return url
-  end
-
-  local path = vim.api.nvim_buf_get_name(0)
-  local url = discover_remote(remotes, push, path)
-  if not url then url = discover_remote(remotes, push, vim.api.nvim_get_current_dir()) end
-
-  if not url and (owner ~= '' and repo ~= '') then -- fallback to github if owner and repo are present
-    url = 'https://github.com/foo/bar'
-  end
-  if not url then
-    return vim.notify('[gx]: ' .. 'No remote git repository found!', vim.log.levels.WARN)
-  end
-  if type(owner) == 'string' and owner ~= '' then
-    local domain, repository = url:match('^https?://([^/]+)/[^/]+/([^/]*)')
-    if repo ~= '' then repository = repo end
-    url = string.format('https://%s/%s/%s', domain, owner, repository)
-  end
-
-  return url
-end
-
 ---@type GxOptions
 local options = ...
 options = {
@@ -99,7 +56,7 @@ options = {
         local push = options.git_remote_push
         if type(push) == 'function' then push = push(vim.fn.expand('%:p')) end
 
-        local git_url = get_remote_url(remotes, push)
+        local git_url = u.git.smart_remote_url()
         if not git_url then return end
         return git_url .. '/commit/' .. commit_hash
       end,
@@ -125,7 +82,7 @@ options = {
         local push = options.git_remote_push
         if type(push) == 'function' then push = push(vim.fn.expand('%:p')) end
 
-        local git_url = get_remote_url(remotes, push, owner, repo)
+        local git_url = u.git.smart_remote_url() -- get_remote_url(remotes, push, owner, repo)
         if not git_url then return end
         return git_url .. '/issues/' .. issue
       end,
